@@ -163,7 +163,7 @@ class FSDPCheckpoint:
             # which makes it easier to adapt to different resolutions.
             model_state_dict.pop('latent_pos_embed.pos_embed')
             model_state_dict.pop('vit_pos_embed.pos_embed')
-            msg = model.load_state_dict(model_state_dict, strict=False)
+            msg = model.load_state_dict(model_state_dict, strict=False,assign = True)
             logger.info(msg)
             del model_state_dict
 
@@ -177,7 +177,7 @@ class FSDPCheckpoint:
                 # which makes it easier to adapt to different resolutions.
                 ema_state_dict.pop('latent_pos_embed.pos_embed')
                 ema_state_dict.pop('vit_pos_embed.pos_embed')
-                msg = ema_model.load_state_dict(ema_state_dict, strict=False)
+                msg = ema_model.load_state_dict(ema_state_dict, strict=False,assign = True)
                 logger.info(msg)
                 del ema_state_dict
         else:

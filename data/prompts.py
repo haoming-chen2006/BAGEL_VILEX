@@ -9,8 +9,8 @@ variations = [
     "make a picture of",
     "produce a picture of",
     "render a picture of",
-    "generate artwork of",
-    "create artwork of",
+    "generate image of",
+    "image",
     "make artwork of",
     "produce artwork of",
     "render artwork of",
@@ -103,3 +103,17 @@ variations = [
     ""
     " "
 ]
+# simple script to get the tokenized tokens -- used to calculae max length for padding
+# from modeling.qwen2 import Qwen2Tokenizer
+# from data.data_utils import add_special_tokens
+# model_path = "/home/haoming/Bagel/models/BAGEL-7B-MoT"
+# tokenizer = Qwen2Tokenizer.from_pretrained(model_path)
+# tokenizer, new_token_ids, num_new_tokens = add_special_tokens(tokenizer)
+
+# length = 0
+# for words in variations:
+#     tokenized = tokenizer.encode(words)
+#     print(tokenized)
+#     length = max(length,len(tokenized))
+
+# print(length)

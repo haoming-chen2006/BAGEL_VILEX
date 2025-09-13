@@ -349,7 +349,7 @@ class Bagel(PreTrainedModel):
         extra_inputs = {}
         if self.use_moe:
             extra_inputs = {"mode": "und"}
-        print("can updae?")
+
         output = self.language_model.forward_inference(
             packed_query_sequence=packed_text_embedding,
             query_lens=text_token_lens,
@@ -362,7 +362,6 @@ class Bagel(PreTrainedModel):
             is_causal=True,
             **extra_inputs,
         )
-        print("fails to update")
         past_key_values = output.past_key_values
 
         return past_key_values
@@ -717,6 +716,10 @@ class Bagel(PreTrainedModel):
         self,
         packed_text_ids: torch.LongTensor,
         packed_text_indexes: torch.LongTensor,
+
+        packed_vilex_tokens: torch.LongTensor,
+        packed_vilex_indexes: torch.LongTensor,
+
         packed_init_noises: torch.Tensor,
         packed_vae_position_ids: torch.LongTensor,
         packed_vae_token_indexes: torch.LongTensor,
@@ -783,6 +786,10 @@ class Bagel(PreTrainedModel):
                 packed_vae_position_ids=packed_vae_position_ids,
                 packed_text_ids=packed_text_ids,
                 packed_text_indexes=packed_text_indexes,
+
+                packed_vilex_tokens =  torch.LongTensor,
+                packed_vilex_indexes =  torch.LongTensor,
+
                 packed_position_ids=packed_position_ids,
                 packed_indexes=packed_indexes,
                 packed_seqlens=packed_seqlens,
@@ -834,6 +841,9 @@ class Bagel(PreTrainedModel):
         packed_vae_position_ids: torch.LongTensor,
         packed_text_ids: torch.LongTensor,
         packed_text_indexes: torch.LongTensor,
+
+        
+
         packed_indexes: torch.LongTensor,
         packed_position_ids: torch.LongTensor,
         packed_seqlens: torch.IntTensor,
@@ -864,9 +874,27 @@ class Bagel(PreTrainedModel):
         model_pred_text_current: Optional[int] = None,
         model_pred_img_cache_dic: Optional[Dict[str, Any]] = None,
         model_pred_img_current: Optional[int] = None,
+        packed_vit_tokens: Optional[torch.LongTensor] = None,
+        packed_vilex_indexes: Optional[torch.LongTensor] = None,
+        packed_vit_position_ids: Optional[torch.LongTensor] = None,
     ):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
+            # ...existing code...
+        if packed_vit_tokens is not None:
+            cu_seqlens = packed_vilex_indexes.shape[0]
+            max_seqlen = cu_seqlens
+            packed_vit_token_embed = self.vit_model(
+                packed_pixel_values=packed_vit_tokens, 
+                packed_flattened_position_ids=packed_vit_position_ids,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
+            packed_vilex_tokens = self.connector(0,packed_vit_token_embed)
+            packed_text_embedding = torch.cat(packed_text_embedding,packed_vilex_tokens,dim = 0)
+            packed_text_indexes = torch.cat(packed_text_indexes,packed_vilex_indexes,dim = 0)
+
+
         packed_sequence[packed_text_indexes] = packed_text_embedding
 
         assert timestep.unique().shape[0] == 1

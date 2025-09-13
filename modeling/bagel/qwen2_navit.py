@@ -245,8 +245,10 @@ class PackedAttention(Qwen2Attention):
 
     def forward(self, *args, **kwargs):
         if self.training:
+            print("calling training!")
             return self.forward_train(*args, **kwargs)
         else:
+            print("Calling attention!")
             return self.forward_inference(*args, **kwargs)
 
     def forward_train(
@@ -399,8 +401,10 @@ class PackedAttentionMoT(Qwen2Attention):
 
     def forward(self, *args, **kwargs):
         if self.training:
+            print("calling training")
             return self.forward_train(*args, **kwargs)
         else:
+            print("calling inference")
             return self.forward_inference(*args, **kwargs)
 
     def forward_train(
@@ -613,8 +617,10 @@ class Qwen2DecoderLayer(nn.Module):
 
     def forward(self, *args, **kwargs):
         if self.training:
+            print("calling training")
             return self.forward_train(*args, **kwargs)
         else:
+            print("calling attention")
             return self.forward_inference(*args, **kwargs)
 
     def forward_train(
@@ -962,9 +968,12 @@ class Qwen2Model(Qwen2PreTrainedModel):
         self.post_init()
 
     def forward(self, *args, **kwargs):
+        #temporrary for inference needs -- need ot figure out how to change this 
         if self.training:
+            print("calling training")
             return self.forward_train(*args, **kwargs)
         else:
+            print("calling inference")
             return self.forward_inference(*args, **kwargs)
 
     def forward_train(

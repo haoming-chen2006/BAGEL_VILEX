@@ -80,7 +80,7 @@ class SiglipVisionConfig(_SiglipVisionConfig):
         hidden_act="gelu_pytorch_tanh",
         layer_norm_eps=1e-6,
         attention_dropout=0.0,
-        rope=True,
+        rope=False,
         output_hidden_states=True,
         **kwargs,
     ):
@@ -110,6 +110,7 @@ class RotaryEmbedding2D(torch.nn.Module):
         grid_h = torch.arange(0, max_h)
         grid_h = grid_h.to(inv_freq.dtype)
         grid_h = grid_h[:, None].repeat(1, max_w)
+
 
         grid_w = torch.arange(0, max_w)
         grid_w = grid_w.to(inv_freq.dtype)
@@ -164,6 +165,9 @@ class SiglipVisionEmbeddings(nn.Module):
         self.num_patches_per_side = self.image_size // self.patch_size
         self.num_patches = self.num_patches_per_side**2
         self.num_positions = self.num_patches
+
+        
+        print(f"DEBUG: Initialized embedding table with size {self.num_positions}")
         if not config.rope:
             self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
 
@@ -189,10 +193,10 @@ class SiglipVisionEmbeddings(nn.Module):
         packed_pixel_values: torch.FloatTensor, 
         packed_flattened_position_ids: torch.LongTensor
     ) -> torch.Tensor:
-
         patch_embeds = self.patch_embedding(packed_pixel_values)
         if not self.config.rope:
-            embeddings = patch_embeds + self.position_embedding(packed_flattened_position_ids)
+            clamped_position_ids = packed_flattened_position_ids.clamp(0, self.num_positions - 1)
+            embeddings = patch_embeds + self.position_embedding(clamped_position_ids)
         else:
             embeddings = patch_embeds
         return embeddings
@@ -213,7 +217,7 @@ class SiglipFlashAttention2(SiglipAttention):
         sin_w: torch.Tensor = None,
         **kwargs,
     ) -> torch.Tensor:
-
+    
         total_q_len, _ = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
@@ -367,11 +371,9 @@ class SiglipVisionTransformer(nn.Module):
         max_seqlen: int,
         output_hidden_states: bool = None,  # ← Add this parameter
     ) -> torch.Tensor:
-        
         # Use config default if not specified
         if output_hidden_states is None:
             output_hidden_states = self.config.output_hidden_states
-        
         hidden_states = self.embeddings(
             packed_pixel_values=packed_pixel_values, 
             packed_flattened_position_ids=packed_flattened_position_ids

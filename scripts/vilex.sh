@@ -14,9 +14,9 @@ torchrun \
   --resume-model-only False \
   --finetune-from-ema True \
    --finetune-from-hf True \
-  --log_every 10 \
+  --log_every 50 \
   --lr 2e-5 \
-  --num_worker 2 \
+  --num_worker 4 \
   --expected_num_tokens 2048 \
   --max_num_tokens 3000 \
   --max_num_tokens_per_sample 2048\
@@ -27,5 +27,6 @@ torchrun \
   --freeze_vit True \
   --freeze_vae True \
   --cpu_offload True \
-  --save_every 100\
-  --checkpoint_dir /home/haoming/Bagel/results/checkpoints\
+  --save_every 500\
+  --checkpoint_dir /home/haoming/Bagel/experiments/results_32query/checkpoints \
+  --results_dir /home/haoming/Bagel/experiments/results_32query/

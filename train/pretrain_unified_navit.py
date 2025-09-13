@@ -674,6 +674,41 @@ def main():
         data_indexes = data.pop('batch_data_indexes', None)
         ce_loss_weights = data.pop('ce_loss_weights', None)
         
+        # Insert debug print here
+        print("debug -- printing out keys in forward pass")
+        print("========== DEBUG: Forward Pass Input Keys ==========")
+        for key in [
+            "sequence_length", "packed_text_ids", "packed_text_indexes", "sample_lens", "packed_position_ids",
+            "nested_attention_masks", "split_lens", "attn_modes", "ce_loss_indexes", "packed_label_ids",
+            "packed_vit_tokens", "packed_vit_token_indexes", "packed_vit_position_ids", "vit_token_seqlens",
+            "padded_latent", "patchified_vae_latent_shapes", "packed_latent_position_ids", "packed_vae_token_indexes",
+            "packed_timesteps", "mse_loss_indexes", "num_tokens", "k"
+        ]:
+            value = data.get(key, None)
+            print(f"Key: {key}")
+            if value is None:
+                print("  Value: None")
+            elif isinstance(value, torch.Tensor):
+                print("this is a tensor")
+                print(f"  Shape: {tuple(value.shape)}")
+                if value.numel() > 0:
+                    if value.dim() == 1:
+                        print(f"  Values: {value[:10].cpu().numpy()} ...")
+                    elif value.dim() == 2:
+                        print(f"  First row: {value[0, :10].cpu().numpy()} ...")
+                    else:
+                        print(f"  Dtype: {value.dtype}")
+            elif isinstance(value, list):
+                print("this is a list")
+                print(f"  Length: {len(value)}")
+                if len(value) > 0:
+                    print(f"  First 10: {value[:10]} ...")
+            elif isinstance(value, dict):
+                print("this is a key")
+                print(f"  Keys: {list(value.keys())}")
+            else:
+                print(f"  Value: {value}")
+        print("====================================================")
         if curr_step <= 3:
             show_memory(f"STEP {curr_step} - AFTER DATA LOAD", logger)
         

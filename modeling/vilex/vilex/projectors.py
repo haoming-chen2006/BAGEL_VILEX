@@ -56,18 +56,13 @@ class AttentionPoolingProjector(nn.Module):
         out_dim: int,
         num_heads: int = 8,
         num_output_tokens: int = 1,
-        taildrop_prob: float = 0.0,
-        taildrop_max: int = 0,
     ):
         super().__init__()
         self.num_output_tokens = num_output_tokens
         self.query = nn.Parameter(torch.randn(1, num_output_tokens, in_dim))
         self.attn = nn.MultiheadAttention(embed_dim=in_dim, num_heads=num_heads, batch_first=True)
         self.proj = nn.Linear(in_dim, out_dim)
-        self.taildrop_prob = taildrop_prob
-        self.taildrop_max = taildrop_max
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor,k) -> torch.Tensor:
         """
         Apply attention pooling to input features.
 
@@ -81,12 +76,7 @@ class AttentionPoolingProjector(nn.Module):
         B = x.size(0)
         query = self.query.expand(B, -1, -1)
         attn_out, _ = self.attn(query, x, x)
-
-        # Apply TailDrop regularization during training
-        if self.training and self.taildrop_prob > 0 and self.taildrop_max > 0 and self.num_output_tokens > 1:
-            k = random.randint(0, self.taildrop_max) if random.random() < self.taildrop_prob else 0
-            if k > 0:
-                attn_out = attn_out[:, :-k, :]
+        attn_out = attn_out[:, :-k, :]
 
         return self.proj(attn_out)
 
@@ -123,14 +113,10 @@ class MultiLayerAttentionPoolingProjector(nn.Module):
         num_layers: int = 4,
         num_heads: int = 8,
         num_output_tokens: int = 1,
-        taildrop_prob: float = 0.0,
-        taildrop_max: int = 0,
     ):
         super().__init__()
         self.num_layers = num_layers
         self.num_output_tokens = num_output_tokens
-        self.taildrop_prob = taildrop_prob
-        self.taildrop_max = taildrop_max
         self.layer_indices = layer_indices
 
         # Layer-specific projectors: one for each selected layer
@@ -139,7 +125,7 @@ class MultiLayerAttentionPoolingProjector(nn.Module):
         self.attn = nn.MultiheadAttention(embed_dim=in_dim, num_heads=num_heads, batch_first=True)
         self.proj = nn.Linear(in_dim, out_dim)
 
-    def forward(self, hidden_states: Tuple[torch.Tensor, ...]) -> torch.Tensor:
+    def forward(self, k,hidden_states: Tuple[torch.Tensor, ...]) -> torch.Tensor:
         """
         Pool features from multiple transformer layers using attention.
 
@@ -151,27 +137,30 @@ class MultiLayerAttentionPoolingProjector(nn.Module):
             Pooled tensor of shape (num_output_tokens, out_dim) in packed format
             During training with TailDrop, may return fewer tokens.
         """
+
         # Select and project features from specified layers
         layer_tokens = [proj(hidden_states[i]) for proj, i in zip(self.layer_projectors, self.layer_indices)]
 
+        
         # Concatenate tokens from all selected layers along token dimension
         x = torch.cat(layer_tokens, dim=0)  # (T_total, C) where T_total = T * len(layer_indices)
-        
+
         # Add batch dimension for MultiheadAttention
         x = x.unsqueeze(0)  # (1, T_total, C)
 
         # Use pre-defined query (already has batch dimension)
         query = self.query  # (1, num_output_tokens, in_dim)
+
+
         attn_out, _ = self.attn(query, x, x)  # (1, num_output_tokens, in_dim)
 
         # Apply TailDrop regularization during training
-        if self.training and self.taildrop_prob > 0 and self.taildrop_max > 0 and self.num_output_tokens > 1:
-            k = random.randint(0, self.taildrop_max) if random.random() < self.taildrop_prob else 0
-            if k > 0:
-                attn_out = attn_out[:, :-k, :]
+        if k > 0 and k < self.num_output_tokens:
+            attn_out = attn_out[:, :-k, :]
         
         # Project to output dimension
         output = self.proj(attn_out)  # (1, num_output_tokens, out_dim)
+
         
         # Remove batch dimension to return packed format
         return output.squeeze(0)  # (num_output_tokens, out_dim)

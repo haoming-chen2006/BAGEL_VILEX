@@ -1,5 +1,3 @@
-
-
 import functools
 import os
 import wandb
@@ -147,16 +145,16 @@ class ModelArguments:
         default= 8,
         metadata={"help": "number of heads used during attention pooling."}
     )
-    num_output_tokens: int = field(  # ← Add the missing colon here
-        default= 1,
+    num_output_tokens: int = field(  # 32 for real, 1 for debugging
+        default= 32,
         metadata={"help": "number of output tokens the project outputs."}
     )
     tail_drop_prob: float = field(  # ← Change from int to float
-        default= 0.0,
+        default= 0.1,
         metadata={"help": "taildrop probability for vilex."}
     )
     tail_drop_max: int = field(
-        default= 0,
+        default= 10,
         metadata={"help": "max number of tokens dropped ."}
     )
 
@@ -421,8 +419,7 @@ def main():
         wandb.config.update(data_args, allow_val_change=True)
     else:
         logger = create_logger(None, dist.get_rank())
-    
-    show_memory("AFTER SETUP", logger)
+
     
     dist.barrier()
     logger.info(f'Training arguments {training_args}')
@@ -472,7 +469,6 @@ def main():
     if training_args.copy_init_moe:
         language_model.init_moe()
 
-    show_memory("AFTER LANGUAGE MODEL", logger)
 
     if training_args.visual_und:  
         if training_args.finetune_from_hf:
@@ -486,15 +482,12 @@ def main():
         else:
             vit_model = SiglipVisionModel.from_pretrained(model_args.vit_path, config=vit_config)
 
-    show_memory("AFTER VISION MODEL", logger)
 
     if training_args.visual_gen:
         vae_model, vae_config = load_ae(
             local_path=os.path.join(model_args.model_path, "ae.safetensors") 
-            if training_args.finetune_from_hf else model_args.vae_path
         )
 
-    show_memory("AFTER VAE MODEL", logger)
 
     config = BagelConfig(
         visual_gen=training_args.visual_gen,
@@ -523,7 +516,6 @@ def main():
         config
     )
 
-    show_memory("AFTER BAGEL MODEL CREATION", logger)
 
     model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
 
@@ -536,18 +528,14 @@ def main():
         model.language_model.config.vocab_size = len(tokenizer)
 
     # maybe freeze something:
-    if training_args.freeze_vae and training_args.visual_gen:
-        for param in vae_model.parameters():
-            param.requires_grad = False
-    if training_args.freeze_llm:
-        model.language_model.eval()
-        for param in model.language_model.parameters():
-            param.requires_grad = False
-    if training_args.freeze_vit and training_args.visual_und:
-        model.vit_model.eval()
-        for param in model.vit_model.parameters():
-            param.requires_grad = False
-
+    for param in vae_model.parameters():
+        param.requires_grad = False
+    for param in model.parameters():
+        param.requires_grad = False
+    for param in model.connector.parameters():
+        param.requires_grad = True
+    trainable_params = sum(p.numel() for p in model.connector.parameters() if p.requires_grad)
+    print(f"Number of trainable parameters in model.connector: {trainable_params}")
     # Setup FSDP and load pretrained model:
     fsdp_config = FSDPConfig(
         sharding_strategy=training_args.sharding_strategy,
@@ -562,12 +550,12 @@ def main():
     model, ema_model = FSDPCheckpoint.try_load_ckpt(
         resume_from, logger, model, ema_model, resume_from_ema=finetune_from_ema
     )
-    show_memory("AFTER CHECKPOINT LOAD", logger)
+
     
     ema_model = fsdp_ema_setup(ema_model, fsdp_config)
     
     fsdp_model = fsdp_wrapper(model, fsdp_config)
-    show_memory("AFTER FSDP WRAPPER", logger)
+
     apply_activation_checkpointing(
         fsdp_model, 
         checkpoint_wrapper_fn=functools.partial(
@@ -610,13 +598,13 @@ def main():
             resume_from, optimizer, scheduler, fsdp_config, 
         )
 
-    train_loader = get_loader(split = "train")
+    train_loader = get_loader(split = "train",vae_model = vae_model)
     # Prepare models for training:
     vae_model.to(device).eval()
     fsdp_model.train()
     ema_model.eval()
 
-    show_memory("BEFORE TRAINING LOOP", logger)
+
 
     # train loop
     start_time = time()
@@ -638,12 +626,10 @@ def main():
                 # Move to device first
                 v = v.to(device)
                 if v.dtype.is_floating_point:
-                    print("converting!" + str(k))
                     v = v.to(torch.bfloat16)
                 
                 data[k] = v
 
-        print("finished converting!")
 
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             if training_args.visual_gen:
@@ -653,10 +639,6 @@ def main():
 
         loss = 0
         ce = loss_dict["ce"]
-
-
-
-        # usually train with ce
 
 
 
