@@ -219,6 +219,27 @@ class NaiveCache:
             return self.key_cache[0].shape[0]
         else:
             return 0
+    
+    def to(self, device):
+        """Move cache tensors to the specified device."""
+        new_cache = NaiveCache(self.num_layers)
+        
+        for k in range(self.num_layers):
+            if self.key_cache[k] is not None:
+                try:
+                    new_cache.key_cache[k] = self.key_cache[k].to(device)
+                except Exception:
+                    # If moving fails, keep original tensor
+                    new_cache.key_cache[k] = self.key_cache[k]
+            
+            if self.value_cache[k] is not None:
+                try:
+                    new_cache.value_cache[k] = self.value_cache[k].to(device)
+                except Exception:
+                    # If moving fails, keep original tensor
+                    new_cache.value_cache[k] = self.value_cache[k]
+        
+        return new_cache
 
 
 @dataclass
@@ -401,10 +422,8 @@ class PackedAttentionMoT(Qwen2Attention):
 
     def forward(self, *args, **kwargs):
         if self.training:
-            print("calling training")
             return self.forward_train(*args, **kwargs)
         else:
-            print("calling inference")
             return self.forward_inference(*args, **kwargs)
 
     def forward_train(
@@ -970,10 +989,8 @@ class Qwen2Model(Qwen2PreTrainedModel):
     def forward(self, *args, **kwargs):
         #temporrary for inference needs -- need ot figure out how to change this 
         if self.training:
-            print("calling training")
             return self.forward_train(*args, **kwargs)
         else:
-            print("calling inference")
             return self.forward_inference(*args, **kwargs)
 
     def forward_train(

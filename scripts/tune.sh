@@ -11,8 +11,8 @@ torchrun \
   --layer_module Qwen2MoTDecoderLayer \
   --max_latent_size 64 \
   --finetune_from_hf True \
-  --auto_resume True \
-  --resume-model-only False \
+  --resume_from models/BAGEL-7B-MoT \
+  --resume-model-only True \
   --finetune-from-ema True \
    --finetune-from-hf True \
   --log_every 1 \
@@ -29,4 +29,3 @@ torchrun \
   --freeze_vae True \
   --cpu_offload True \
   --save_every 10\
-  --checkpoint_dir /home/haoming/Bagel/results/checkpoints\

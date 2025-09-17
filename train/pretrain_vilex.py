@@ -1,5 +1,6 @@
 import functools
 import os
+import sys
 import wandb
 import yaml
 import gc
@@ -36,7 +37,10 @@ from train.fsdp_utils import (
     FSDPCheckpoint, FSDPConfig, grad_checkpoint_check_fn, fsdp_wrapper, 
     fsdp_ema_setup, fsdp_ema_update,
 )
-
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from training_evaluation_minimal import create_minimal_training_evaluation_suite
 
 def show_memory(tag, logger=None):
     """Track GPU memory usage at different stages"""
@@ -93,7 +97,7 @@ class ModelArguments:
         metadata={"help": "Path or repo ID of the SigLIP Vision Transformer used for image understanding."}
     )
     max_latent_size: int = field(
-        default=32,
+        default=64,
         metadata={"help": "Maximum latent grid size (patches per side) for the VAE latent tensor."}
     )
     latent_patch_size: int = field(
@@ -101,11 +105,11 @@ class ModelArguments:
         metadata={"help": "Spatial size (in VAE pixels) covered by each latent patch."}
     )
     vit_patch_size: int = field(
-        default=16,
+        default=14,
         metadata={"help": "Patch size (pixels) for the Vision Transformer encoder."}
     )
     vit_max_num_patch_per_side: int = field(
-        default=32,
+        default=70,
         metadata={"help": "Maximum number of ViT patches along one image side after cropping / resize."}
     )
     connector_act: str = field(
@@ -210,11 +214,11 @@ class TrainingArguments:
 
     # --- bookkeeping & logging ---
     results_dir: str = field(
-        default="results",
+        default="/home/haoming/Bagel/experiments/results_tune",
         metadata={"help": "Root directory for logs."}
     )
     checkpoint_dir: str = field(
-        default="results/checkpoints",
+        default="/home/haoming/Bagel/experiments/results_tune/checkpoints",
         metadata={"help": "Root directory for model checkpoints."}
     )
     use_wandb: bool = field(
@@ -222,15 +226,15 @@ class TrainingArguments:
         metadata={"help": "Enable or disable Weights & Biases logging."}
     )
     wandb_project: str = field(
-        default="bagel",
+        default="bagel_new_no_ce",
         metadata={"help": "Weights & Biases project name."}
     )
     wandb_name: str = field(
-        default="run",
+        default="run_new",
         metadata={"help": "Name shown in the Weights & Biases UI for this run."}
     )
     wandb_runid: str = field(
-        default="0",
+        default="1",
         metadata={"help": "Unique identifier to resume a previous W&B run, if desired."}
     )
     wandb_resume: str = field(
@@ -248,7 +252,7 @@ class TrainingArguments:
         metadata={"help": "Base random seed; actual seed is offset by rank for DDP."}
     )
     auto_resume: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Automatically pick up the latest checkpoint found in checkpoint_dir."}
     )
     resume_from: str = field(
@@ -260,11 +264,11 @@ class TrainingArguments:
         metadata={"help": "Load only model weights, ignoring optimizer/scheduler states."}
     )
     finetune_from_ema: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "When resume_model_only=True, load the EMA (exponential moving average) weights instead of raw weights."}
     )
     finetune_from_hf: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Whether finetune from HugginFace model."}
     )
 
@@ -429,7 +433,7 @@ def main():
     # prepare auto resume logic:
     if training_args.auto_resume:
         resume_from = get_latest_ckpt(training_args.checkpoint_dir)
-        print("resuming from" + str(resume_from))
+        
         if resume_from is None:
             resume_from = training_args.resume_from
             resume_model_only = training_args.resume_model_only
@@ -447,7 +451,8 @@ def main():
             finetune_from_ema = training_args.finetune_from_ema
         else:
             finetune_from_ema = False
-
+    resume_from_ema = True
+    print("resuming from" + str(resume_from))
     # Set seed:
     seed = training_args.global_seed * dist.get_world_size() + dist.get_rank()
     set_seed(seed)
@@ -528,14 +533,31 @@ def main():
         model.language_model.config.vocab_size = len(tokenizer)
 
     # maybe freeze something:
+    for param in model.language_model.parameters():
+        param.requires_grad = False
     for param in vae_model.parameters():
         param.requires_grad = False
     for param in model.parameters():
         param.requires_grad = False
     for param in model.connector.parameters():
         param.requires_grad = True
-    trainable_params = sum(p.numel() for p in model.connector.parameters() if p.requires_grad)
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
     print(f"Number of trainable parameters in model.connector: {trainable_params}")
+    print(f"Total parameters: {total_params}")
+    for name,param in model.named_parameters():
+        if param.requires_grad:
+            logger.info(f"Name: {name}")
+            logger.info(f"Shape: {param.shape}")
+            logger.info(f"Number of trainable parameters in model.connector: {trainable_params}")
+            logger.info(f"Total parameters: {total_params}")
+    if dist.get_rank() == 0:  # Only on main process
+        evaluation_suite = create_minimal_training_evaluation_suite(
+            model=model,
+            tokenizer=tokenizer,
+            output_dir=training_args.checkpoint_dir,
+            run_name=training_args.wandb_name
+        )
     # Setup FSDP and load pretrained model:
     fsdp_config = FSDPConfig(
         sharding_strategy=training_args.sharding_strategy,
@@ -545,12 +567,28 @@ def main():
         num_shard=training_args.num_shard,
     )
     ema_model = deepcopy(model)
-    
-
+    print("start loading checkpoint")
     model, ema_model = FSDPCheckpoint.try_load_ckpt(
         resume_from, logger, model, ema_model, resume_from_ema=finetune_from_ema
     )
+    print("finished loading checkpoint")
 
+    # Ensure both model and EMA model parameters and buffers have uniform dtype before FSDP wrapping
+    for param in model.parameters():
+        if param.dtype != torch.bfloat16:
+            param.data = param.data.to(torch.bfloat16)
+    
+    for buffer in model.buffers():
+        if buffer.dtype.is_floating_point and buffer.dtype != torch.bfloat16:
+            buffer.data = buffer.data.to(torch.bfloat16)
+    
+    for param in ema_model.parameters():
+        if param.dtype != torch.bfloat16:
+            param.data = param.data.to(torch.bfloat16)
+    
+    for buffer in ema_model.buffers():
+        if buffer.dtype.is_floating_point and buffer.dtype != torch.bfloat16:
+            buffer.data = buffer.data.to(torch.bfloat16)
     
     ema_model = fsdp_ema_setup(ema_model, fsdp_config)
     
@@ -563,9 +601,7 @@ def main():
         ), 
         check_fn=grad_checkpoint_check_fn
     )
-
-
-
+    print("start configuring optimizer")
     # Setup optimizer and scheduler
     optimizer = torch.optim.AdamW(
         fsdp_model.parameters(), 
@@ -590,14 +626,16 @@ def main():
         raise ValueError
 
     # maybe resume optimizer, scheduler, and train_steps
+    resume_model_only = True
     if resume_model_only:
+        print("only resuming model")
         train_step = 0
         data_status = None
     else:
         optimizer, scheduler, train_step, data_status = FSDPCheckpoint.try_load_train_state(
             resume_from, optimizer, scheduler, fsdp_config, 
         )
-
+    print("getting loader")
     train_loader = get_loader(split = "train",vae_model = vae_model)
     # Prepare models for training:
     vae_model.to(device).eval()
@@ -605,20 +643,21 @@ def main():
     ema_model.eval()
 
 
-
+    print("correctly loiaded model")
     # train loop
     start_time = time()
     logger.info(f"Training for {training_args.total_steps} steps, starting at {train_step}...")
+    if dist.get_rank() == 0:
+        evaluation_suite.process_training_start(logger, step=train_step)
     for curr_step, data in enumerate(train_loader, start=train_step):
         # Memory tracking for first few steps
         if curr_step <= 1:
             show_memory(f"STEP {curr_step} - START", logger)
+            if dist.get_rank() == 0:
+                evaluation_suite.process_first_batch(data, tokenizer, logger, curr_step)
         
         data_indexes = data.pop('batch_data_indexes', None)
         ce_loss_weights = data.pop('ce_loss_weights', None)
-        
-        if curr_step <= 3:
-            show_memory(f"STEP {curr_step} - AFTER DATA LOAD", logger)
 
         # converting data now -- need a more permanenet solution to match    
         for k, v in data.items():
@@ -655,7 +694,6 @@ def main():
             loss_dict["ce"] = ce.detach()
             loss = loss + ce * training_args.ce_weight
         else:
-            assert not training_args.visual_und
             loss_dict["ce"] = torch.tensor(0, device=device)
             total_ce_tokens = torch.tensor(0, device=device)
 
@@ -742,6 +780,8 @@ def main():
                 fsdp_config=fsdp_config,
                 data_status=gather_list
             )
+            if dist.get_rank() == 0:
+                evaluation_suite.process_checkpoint_save(curr_step, logger)
 
     logger.info("Done!")
     if dist.get_rank() == 0:

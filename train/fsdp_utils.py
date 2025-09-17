@@ -151,11 +151,15 @@ class FSDPCheckpoint:
         return
 
     @staticmethod
-    def try_load_ckpt(resume_from, logger, model, ema_model=None, resume_from_ema=False):
+    def try_load_ckpt(resume_from, logger, model, ema_model=None, resume_from_ema=True):
+        print(f"resume from: {resume_from}")
+        
+        resume_from_ema = True
         if resume_from is not None and os.path.exists(resume_from):
             logger.info(f"Loading checkpoint from {resume_from}.")
             if resume_from_ema:
                 model_state_dict_path = os.path.join(resume_from, f"ema.safetensors")
+                print(f"loading checkpoint from {model_state_dict_path}")
             else:
                 model_state_dict_path = os.path.join(resume_from, f"model.safetensors")
             model_state_dict = load_file(model_state_dict_path, device="cpu")

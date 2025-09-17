@@ -1,0 +1,89 @@
+# Model Configuration
+model:
+  model_path: "/home/haoming/Bagel/models/BAGEL-7B-MoT"
+  mode: 1  # 1=full precision, 2=4bit, 3=8bit
+  ckpt_path: "/home/haoming/Bagel/experiments/results_32query/checkpoints/0000500"
+
+# Device and Memory Configuration  
+device:
+  max_memory_per_gpu: "80GiB"
+  offload_folder: "offload"
+  no_split_module_classes: ["Bagel", "Qwen2MoTDecoderLayer"]
+  same_device_modules:
+    - "language_model.model.embed_tokens"
+    - "time_embedder" 
+    - "latent_pos_embed"
+    - "vae2llm"
+    - "llm2vae"
+    - "connector"
+    - "vit_pos_embed"
+
+# LLM Configuration Overrides
+llm_config:
+  qk_norm: true
+  tie_word_embeddings: false
+  layer_module: "Qwen2MoTDecoderLayer"
+
+# Vision Model Configuration Overrides
+vit_config:
+  rope: false
+  num_hidden_layers_adjustment: -1  # Subtract 1 from loaded config
+
+# BAGEL Model Configuration
+bagel_config:
+  visual_gen: true
+  visual_und: true
+  vit_max_num_patch_per_side: 70
+  connector_act: "gelu_pytorch_tanh"
+  latent_patch_size: 2
+  max_latent_size: 64
+
+# Transform Configuration
+transforms:
+  vae:
+    resolution: 1024
+    crop_size: 512
+    patch_size: 16
+  vit:
+    resolution: 980
+    crop_size: 224
+    patch_size: 14
+
+# Inference Defaults
+inference:
+  text_to_image:
+    cfg_text_scale: 4.0
+    cfg_interval: 0.4
+    timestep_shift: 3.0
+    num_timesteps: 50
+    cfg_renorm_min: 0.0
+    cfg_renorm_type: "global"
+    max_think_token_n: 1024
+    do_sample: false
+    text_temperature: 0.3
+    seed: 0
+  
+  image_edit:
+    cfg_text_scale: 4.0
+    cfg_img_scale: 2.0
+    cfg_interval: 0.0
+    timestep_shift: 3.0
+    num_timesteps: 50
+    cfg_renorm_min: 0.0
+    cfg_renorm_type: "text_channel"
+  
+  image_understanding:
+    do_sample: false
+    text_temperature: 0.3
+    max_new_tokens: 512
+
+# Quantization Configuration
+quantization:
+  nf4:
+    load_in_4bit: true
+    bnb_4bit_compute_dtype: "bfloat16"
+    bnb_4bit_use_double_quant: false
+    bnb_4bit_quant_type: "nf4"
+  int8:
+    load_in_8bit: true
+    torch_dtype: "float32"

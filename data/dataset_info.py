@@ -4,13 +4,11 @@
 from .interleave_datasets import UnifiedEditIterableDataset
 from .t2i_dataset import T2IIterableDataset
 from .vlm_dataset import SftJSONLIterableDataset
-from .vilex_dataset import DataCompIterableDataset
 
 DATASET_REGISTRY = {
     't2i_pretrain': T2IIterableDataset,
     'vlm_sft': SftJSONLIterableDataset,
     'unified_edit': UnifiedEditIterableDataset,
-    'datacomp_pretrain': DataCompIterableDataset,
 }
 
 

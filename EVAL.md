@@ -388,3 +388,6 @@ action: 4.38
 overall: 3.28
 </pre>
 </details>
+
+
+image generation input

@@ -76,7 +76,7 @@ class SiglipVisionConfig(_SiglipVisionConfig):
         num_attention_heads=12,
         num_channels=3,
         image_size=512,
-        patch_size=16,
+        patch_size=14,
         hidden_act="gelu_pytorch_tanh",
         layer_norm_eps=1e-6,
         attention_dropout=0.0,
@@ -98,7 +98,7 @@ class SiglipVisionConfig(_SiglipVisionConfig):
             **kwargs)
         
         self.rope = rope
-        self.output_hidden_states = True
+        self.output_hidden_states = output_hidden_states
 
 
 class RotaryEmbedding2D(torch.nn.Module):
@@ -326,13 +326,14 @@ class SiglipEncoder(nn.Module):
         sin_w: torch.Tensor = None,
         output_hidden_states: bool = None, 
     ) -> torch.Tensor:
-
+        # output_hidden_state = False # turn this on when running original model
         # Use config default if not specified
         if output_hidden_states is None:
             output_hidden_states = self.config.output_hidden_states
-        
+
         hidden_states = inputs_embeds
         all_hidden_states = () if output_hidden_states else None 
+        print(f"all hidden stats debug {all_hidden_states}")
         
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,) 
@@ -344,6 +345,7 @@ class SiglipEncoder(nn.Module):
                 all_hidden_states = all_hidden_states + (hidden_states,)  
         
         if output_hidden_states:
+            print(f"retuning all hidden states {len(hidden_states)}")
             return all_hidden_states  
         return hidden_states
 

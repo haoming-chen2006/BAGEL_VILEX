@@ -5,7 +5,6 @@ import functools
 import os
 import wandb
 import yaml
-import gc
 from copy import deepcopy
 from dataclasses import dataclass, field
 from time import time
@@ -28,10 +27,7 @@ from data.dataset_base import DataConfig, PackedDataset, collate_wrapper
 from data.data_utils import add_special_tokens
 from modeling.autoencoder import load_ae
 from modeling.bagel import (
-     Qwen2Config, Qwen2ForCausalLM, SiglipVisionConfig, SiglipVisionModel
-)
-from modeling.bagel.bagel_vilex import (
-    BagelConfig, Bagel
+    BagelConfig, Bagel, Qwen2Config, Qwen2ForCausalLM, SiglipVisionConfig, SiglipVisionModel
 )
 from modeling.qwen2 import Qwen2Tokenizer
 from train.train_utils import create_logger, get_latest_ckpt
@@ -41,38 +37,14 @@ from train.fsdp_utils import (
 )
 
 
-def show_memory(tag, logger=None):
-    """Track GPU memory usage at different stages"""
-    torch.cuda.synchronize()
-    allocated = torch.cuda.memory_allocated() / 1024**3  # GB
-    reserved = torch.cuda.memory_reserved() / 1024**3    # GB
-    max_allocated = torch.cuda.max_memory_allocated() / 1024**3  # GB
-    max_reserved = torch.cuda.max_memory_reserved() / 1024**3    # GB
-    
-    message = f"\n=== MEMORY {tag} ===\n"
-    message += f"Allocated: {allocated:.2f} GB\n"
-    message += f"Reserved:  {reserved:.2f} GB\n" 
-    message += f"Max Allocated: {max_allocated:.2f} GB\n"
-    message += f"Max Reserved:  {max_reserved:.2f} GB\n"
-    message += f"Available GPUs: {torch.cuda.device_count()}\n"
-    message += f"Current Device: {torch.cuda.current_device()}\n"
-    message += "=" * 40
-    
-    if logger:
-        logger.info(message)
-    else:
-        print(message)
-
-
-
 @dataclass
 class ModelArguments:
     model_path: str = field(
-        default="models/BAGEL-7B-MoT",
+        default="hf/BAGEL-7B-MoT",
         metadata={"help": "Path of the pretrained BAGEL model."}
     )
     llm_path: str = field(
-        default="Qwen/Qwen2.5-0.5B-Instruct",
+        default="hf/Qwen2.5-0.5B-Instruct/",
         metadata={"help": "Path or HuggingFace repo ID of the pretrained Qwen2-style language model."}
     )
     llm_qk_norm: bool = field(
@@ -92,7 +64,7 @@ class ModelArguments:
         metadata={"help": "Path to the pretrained VAE checkpoint for latent-space image generation."}
     )
     vit_path: str = field(
-        default="google/siglip-so400m-patch14-384",
+        default="hf/siglip-so400m-14-980-flash-attn2-navit/",
         metadata={"help": "Path or repo ID of the SigLIP Vision Transformer used for image understanding."}
     )
     max_latent_size: int = field(
@@ -140,26 +112,6 @@ class ModelArguments:
         default=0.3,
         metadata={"help": "Probability of dropping ViT visual features during training."}
     )
-    num_layer: int = field(
-        default= 4,
-        metadata={"help": "number of layers for vilex's multilayer attention pooling projector."}
-    )
-    num_heads: int = field(
-        default= 8,
-        metadata={"help": "number of heads used during attention pooling."}
-    )
-    num_output_tokens: int = field(  # ← Add the missing colon here
-        default= 1,
-        metadata={"help": "number of output tokens the project outputs."}
-    )
-    tail_drop_prob: float = field(  # ← Change from int to float
-        default= 0.0,
-        metadata={"help": "taildrop probability for vilex."}
-    )
-    tail_drop_max: int = field(
-        default= 0,
-        metadata={"help": "max number of tokens dropped ."}
-    )
 
 
 @dataclass
@@ -198,7 +150,6 @@ class DataArguments:
     )
 
 
-
 @dataclass
 class TrainingArguments:
     # --- modality switches ---
@@ -220,12 +171,8 @@ class TrainingArguments:
         default="results/checkpoints",
         metadata={"help": "Root directory for model checkpoints."}
     )
-    use_wandb: bool = field(
-        default=False,
-        metadata={"help": "Enable or disable Weights & Biases logging."}
-    )
     wandb_project: str = field(
-        default="bagel",
+        default="bagel_original",
         metadata={"help": "Weights & Biases project name."}
     )
     wandb_name: str = field(
@@ -394,11 +341,6 @@ class TrainingArguments:
 
 def main():
     assert torch.cuda.is_available()
-    
-    # Track initial memory
-    show_memory("INITIAL STATE")
-    print("CUDA_VISIBLE_DEVICES=", os.environ.get("CUDA_VISIBLE_DEVICES"))
-    
     dist.init_process_group("nccl")
     device = dist.get_rank() % torch.cuda.device_count()
     torch.cuda.set_device(device)
@@ -417,14 +359,11 @@ def main():
             resume=training_args.wandb_resume,
             mode="offline" if training_args.wandb_offline else "online"
         )
-        wandb.config.update(training_args, allow_val_change=True)
-        wandb.config.update(model_args, allow_val_change=True)
-        wandb.config.update(data_args, allow_val_change=True)
+        wandb.config.update(training_args,allow_val_change=True)
+        wandb.config.update(model_args,allow_val_change=True)
+        wandb.config.update(data_args,allow_val_change=True)
     else:
         logger = create_logger(None, dist.get_rank())
-    
-    show_memory("AFTER SETUP", logger)
-    
     dist.barrier()
     logger.info(f'Training arguments {training_args}')
     logger.info(f'Model arguments {model_args}')
@@ -471,8 +410,6 @@ def main():
     if training_args.copy_init_moe:
         language_model.init_moe()
 
-    show_memory("AFTER LANGUAGE MODEL", logger)
-
     if training_args.visual_und:  
         if training_args.finetune_from_hf:
             vit_config = SiglipVisionConfig.from_json_file(os.path.join(model_args.model_path, "vit_config.json"))
@@ -485,15 +422,11 @@ def main():
         else:
             vit_model = SiglipVisionModel.from_pretrained(model_args.vit_path, config=vit_config)
 
-    show_memory("AFTER VISION MODEL", logger)
-
     if training_args.visual_gen:
         vae_model, vae_config = load_ae(
             local_path=os.path.join(model_args.model_path, "ae.safetensors") 
             if training_args.finetune_from_hf else model_args.vae_path
         )
-
-    show_memory("AFTER VAE MODEL", logger)
 
     config = BagelConfig(
         visual_gen=training_args.visual_gen,
@@ -507,22 +440,12 @@ def main():
         connector_act=model_args.connector_act,
         interpolate_pos=model_args.interpolate_pos,
         timestep_shift=training_args.timestep_shift,
-        use_vilex=True,  # Enable ViLex like test_whole.py
-        vilex_config={
-            "num_layer": model_args.num_layer,
-            "num_heads": model_args.num_heads,
-            "num_output_tokens": model_args.num_output_tokens,
-            "taildrop_prob": model_args.tail_drop_prob,
-            "taildrop_max": model_args.tail_drop_max,
-        },
     )
     model = Bagel(
         language_model, 
         vit_model if training_args.visual_und else None, 
         config
     )
-
-    show_memory("AFTER BAGEL MODEL CREATION", logger)
 
     if training_args.visual_und:
         model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
@@ -557,19 +480,11 @@ def main():
         num_shard=training_args.num_shard,
     )
     ema_model = deepcopy(model)
-
-    print("start loading checkpoint")
-    
     model, ema_model = FSDPCheckpoint.try_load_ckpt(
         resume_from, logger, model, ema_model, resume_from_ema=finetune_from_ema
     )
-    show_memory("AFTER CHECKPOINT LOAD", logger)
-    
     ema_model = fsdp_ema_setup(ema_model, fsdp_config)
-    show_memory("AFTER EMA FSDP SETUP", logger)
-    
     fsdp_model = fsdp_wrapper(model, fsdp_config)
-    show_memory("AFTER FSDP WRAPPER", logger)
     apply_activation_checkpointing(
         fsdp_model, 
         checkpoint_wrapper_fn=functools.partial(
@@ -577,7 +492,6 @@ def main():
         ), 
         check_fn=grad_checkpoint_check_fn
     )
-
 
     if dist.get_rank() == 0:
         print(fsdp_model)
@@ -592,7 +506,6 @@ def main():
         eps=training_args.eps, 
         weight_decay=0
     )
-    show_memory("AFTER OPTIMIZER CREATION", logger)
     if training_args.lr_scheduler == 'cosine':
         scheduler = get_cosine_with_min_lr_schedule_with_warmup(
             optimizer=optimizer,
@@ -616,7 +529,10 @@ def main():
             resume_from, optimizer, scheduler, fsdp_config, 
         )
 
-    
+    # Setup packed dataloader
+    with open(data_args.dataset_config_file, "r") as stream:
+        dataset_meta = yaml.safe_load(stream)
+    dataset_config = DataConfig(grouped_datasets=dataset_meta)
     if training_args.visual_und:
         dataset_config.vit_patch_size = model_args.vit_patch_size
         dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
@@ -660,66 +576,18 @@ def main():
     fsdp_model.train()
     ema_model.eval()
 
-    show_memory("BEFORE TRAINING LOOP", logger)
-
     # train loop
     start_time = time()
     logger.info(f"Training for {training_args.total_steps} steps, starting at {train_step}...")
     for curr_step, data in enumerate(train_loader, start=train_step):
-        # Memory tracking for first few steps
-        if curr_step <= 3:
-            show_memory(f"STEP {curr_step} - START", logger)
-        
         data = data.cuda(device).to_dict()
         data_indexes = data.pop('batch_data_indexes', None)
         ce_loss_weights = data.pop('ce_loss_weights', None)
-        
-        # Insert debug print here
-        print("debug -- printing out keys in forward pass")
-        print("========== DEBUG: Forward Pass Input Keys ==========")
-        for key in [
-            "sequence_length", "packed_text_ids", "packed_text_indexes", "sample_lens", "packed_position_ids",
-            "nested_attention_masks", "split_lens", "attn_modes", "ce_loss_indexes", "packed_label_ids",
-            "packed_vit_tokens", "packed_vit_token_indexes", "packed_vit_position_ids", "vit_token_seqlens",
-            "padded_latent", "patchified_vae_latent_shapes", "packed_latent_position_ids", "packed_vae_token_indexes",
-            "packed_timesteps", "mse_loss_indexes", "num_tokens", "k"
-        ]:
-            value = data.get(key, None)
-            print(f"Key: {key}")
-            if value is None:
-                print("  Value: None")
-            elif isinstance(value, torch.Tensor):
-                print("this is a tensor")
-                print(f"  Shape: {tuple(value.shape)}")
-                if value.numel() > 0:
-                    if value.dim() == 1:
-                        print(f"  Values: {value[:10].cpu().numpy()} ...")
-                    elif value.dim() == 2:
-                        print(f"  First row: {value[0, :10].cpu().numpy()} ...")
-                    else:
-                        print(f"  Dtype: {value.dtype}")
-            elif isinstance(value, list):
-                print("this is a list")
-                print(f"  Length: {len(value)}")
-                if len(value) > 0:
-                    print(f"  First 10: {value[:10]} ...")
-            elif isinstance(value, dict):
-                print("this is a key")
-                print(f"  Keys: {list(value.keys())}")
-            else:
-                print(f"  Value: {value}")
-        print("====================================================")
-        if curr_step <= 3:
-            show_memory(f"STEP {curr_step} - AFTER DATA LOAD", logger)
-        
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             if training_args.visual_gen:
                 with torch.no_grad():
                     data['padded_latent'] = vae_model.encode(data.pop('padded_images'))
             loss_dict = fsdp_model(**data)
-
-        if curr_step <= 3:
-            show_memory(f"STEP {curr_step} - AFTER FORWARD", logger)
 
         loss = 0
         ce = loss_dict["ce"]
@@ -758,9 +626,6 @@ def main():
         optimizer.step()
         scheduler.step()
         fsdp_ema_update(ema_model, fsdp_model, decay=training_args.ema)
-
-        if curr_step <= 3:
-            show_memory(f"STEP {curr_step} - AFTER BACKWARD+UPDATE", logger)
 
         # Log loss values:
         if curr_step % training_args.log_every == 0:

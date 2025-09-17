@@ -121,6 +121,7 @@ class VilexDataset(torch.utils.data.IterableDataset):
         choice = random.randint(0,len(variations)-1)
         # for now use same length text token --  so no padding involved
         text = variations[choice]
+        print(f"selected {text}")
 
         
         

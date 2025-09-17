@@ -9,12 +9,11 @@ torchrun \
   --dataset_config_file /home/haoming/Bagel/data/configs/datacomp.yaml \
   --model_path  /home/haoming/Bagel/models/BAGEL-7B-MoT\
   --layer_module Qwen2MoTDecoderLayer \
-  --max_latent_size 64 \
-  --auto_resume True \
   --resume-model-only False \
   --finetune-from-ema True \
    --finetune-from-hf True \
-  --log_every 50 \
+   --auto_resume True \
+  --log_every 10 \
   --lr 2e-5 \
   --num_worker 4 \
   --expected_num_tokens 2048 \
@@ -27,6 +26,6 @@ torchrun \
   --freeze_vit True \
   --freeze_vae True \
   --cpu_offload True \
-  --save_every 500\
-  --checkpoint_dir /home/haoming/Bagel/experiments/results_32query/checkpoints \
-  --results_dir /home/haoming/Bagel/experiments/results_32query/
+  --save_every 5000\
+  --results_dir /home/haoming/Bagel/experiments/results_tune_no_ce\
+  --checkpoint_dir /home/haoming/Bagel/experiments/results_tune_no_ce/checkpoints \

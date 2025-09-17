@@ -1,0 +1,113 @@
+# BAGEL Training Configuration
+# Maps to ModelArguments, DataArguments, and TrainingArguments dataclasses
+
+# =============================================================================
+# MODEL ARGUMENTS
+# =============================================================================
+model_path: "models/BAGEL-7B-MoT"
+llm_path: "Qwen/Qwen2.5-0.5B-Instruct"
+llm_qk_norm: true
+tie_word_embeddings: false
+layer_module: "Qwen2MoTDecoderLayer"
+
+# VAE & Image Generation
+vae_path: "/home/haoming/Bagel/models/BAGEL-7B-MoT/ae.safetensors"
+max_latent_size: 48  # Reduced from 64 to save memory
+latent_patch_size: 2
+
+# Vision Transformer & Image Understanding  
+vit_path: "HuggingFaceM4/siglip-so400m-14-980-flash-attn2-navit"
+vit_patch_size: 14
+vit_max_num_patch_per_side: 50  # Reduced from 70 to save memory (700px vs 980px)
+vit_select_layer: -2
+vit_rope: false
+
+# Model Architecture
+connector_act: "gelu_pytorch_tanh"
+interpolate_pos: false
+
+# Conditioning Dropout (for robust training)
+text_cond_dropout_prob: 0.1
+vae_cond_dropout_prob: 0.3
+vit_cond_dropout_prob: 0.3
+
+# =============================================================================
+# DATA ARGUMENTS
+# =============================================================================
+dataset_config_file: "./data/configs/example.yaml"
+prefetch_factor: 2
+num_workers: 2
+max_num_tokens_per_sample: 8192
+max_num_tokens: 16384
+prefer_buffer_before: 8192
+max_buffer_size: 50
+data_seed: 42
+
+# =============================================================================
+# TRAINING ARGUMENTS
+# =============================================================================
+
+# --- Modality Switches ---
+visual_gen: true
+visual_und: true
+
+# --- Paths & Logging ---
+results_dir: "results"
+checkpoint_dir: "/home/haoming/Bagel/results/checkpoints" 
+use_wandb: True # Added missing field
+wandb_project: "bagel"
+wandb_name: "bagel_training"
+wandb_runid: "0"
+wandb_resume: "allow"
+wandb_offline: false
+
+# --- Reproducibility & Resume ---
+global_seed: 4396
+auto_resume: true
+resume_from: null  # Changed from 'none' to proper null
+resume_model_only: false
+
+# BAGEL Model Loading Strategy:
+# When loading pretrained BAGEL, BOTH flags must be true:
+# - finetune_from_hf: true  → Use BAGEL's modified configs (not original HF configs)
+# - finetune_from_ema: true → Load trained weights from ema.safetensors (not random init)
+finetune_from_ema: false
+finetune_from_hf: false
+
+# --- Training Schedule ---
+log_every: 10
+save_every: 2000
+total_steps: 100000
+
+# --- Optimization ---
+warmup_steps: 2000
+lr_scheduler: "constant"  # or "cosine"
+lr: 2e-5
+min_lr: 1e-7
+beta1: 0.9
+beta2: 0.95
+eps: 1e-15
+ema: 0.0
+max_grad_norm: 1.0
+
+# --- Loss Weights ---
+timestep_shift: 1.0
+mse_weight: 1.0
+ce_weight: 1.0
+ce_loss_reweighting: false
+expected_num_tokens: 32768
+
+# --- Distributed Training / FSDP ---
+num_replicate: 1
+num_shard: 1
+sharding_strategy: "NO_SHARD"
+backward_prefetch: "BACKWARD_PRE"
+cpu_offload: false
+
+# --- Module Freezing ---
+freeze_llm: true
+freeze_vit: false
+freeze_vae: true
+freeze_und: false
+copy_init_moe: true
+use_flex: true

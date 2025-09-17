@@ -797,7 +797,6 @@ class Bagel(PreTrainedModel):
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
         packed_sequence[packed_text_indexes] = packed_text_embedding
-
         assert timestep.unique().shape[0] == 1
         packed_pos_embed = self.latent_pos_embed(packed_vae_position_ids)
         packed_timestep_embeds = self.time_embedder(timestep)
@@ -830,6 +829,20 @@ class Bagel(PreTrainedModel):
             is_causal=False,
             **extra_inputs,
         )
+        if timestep[0] > 0.9:
+            print(f"x_t: shape={x_t.shape}, dtype={x_t.dtype}, device={x_t.device}, min={x_t.min():.6f}, max={x_t.max():.6f}, mean={x_t.mean():.6f}, std={x_t.std():.6f}")
+            print(f"x_t sample values: {x_t.flatten()[:10].tolist()}")
+            print(f"packed_sequence: shape={packed_sequence.shape}, dtype={packed_sequence.dtype}, device={packed_sequence.device}, min={packed_sequence.min():.6f}, max={packed_sequence.max():.6f}, mean={packed_sequence.mean():.6f}, std={packed_sequence.std():.6f}")
+            print(f"packed_text_embedding: shape={packed_text_embedding.shape}, dtype={packed_text_embedding.dtype}, device={packed_text_embedding.device}, min={packed_text_embedding.min():.6f}, max={packed_text_embedding.max():.6f}, mean={packed_text_embedding.mean():.6f}, std={packed_text_embedding.std():.6f}")
+            print(f"packed_sequence[packed_text_indexes[0]]: shape={packed_sequence[packed_text_indexes[0]].shape}, values={packed_sequence[packed_text_indexes[0]].flatten()[:10].tolist()}")
+            print(f"packed_pos_embed: shape={packed_pos_embed.shape}, dtype={packed_pos_embed.dtype}, device={packed_pos_embed.device}, min={packed_pos_embed.min():.6f}, max={packed_pos_embed.max():.6f}, mean={packed_pos_embed.mean():.6f}, std={packed_pos_embed.std():.6f}")
+            print(f"packed_pos_embed sample values: {packed_pos_embed.flatten()[:10].tolist()}")
+            print(f"packed_timestep_embeds: shape={packed_timestep_embeds.shape}, dtype={packed_timestep_embeds.dtype}, device={packed_timestep_embeds.device}, min={packed_timestep_embeds.min():.6f}, max={packed_timestep_embeds.max():.6f}, mean={packed_timestep_embeds.mean():.6f}, std={packed_timestep_embeds.std():.6f}")
+            print(f"packed_timestep_embeds sample values: {packed_timestep_embeds.flatten()[:10].tolist()}")
+            print(f"packed_vae_token_indexes: shape={packed_vae_token_indexes.shape}, values={packed_vae_token_indexes[:10].tolist()}")
+            print(f"packed_text_indexes: shape={packed_text_indexes.shape}, values={packed_text_indexes[:10].tolist()}")
+            print(f"output: {output}")
+
         v_t = self.llm2vae(output.packed_query_sequence)
         v_t = v_t[packed_vae_token_indexes]
 
