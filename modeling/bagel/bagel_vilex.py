@@ -108,7 +108,6 @@ class Bagel(PreTrainedModel):
             self.vit_hidden_size = config.vit_config.hidden_size
             self.use_vilex = config.use_vilex
             if self.use_vilex:
-            # ...existing code...
                 self.connector = projectors.MultiLayerAttentionPoolingProjector(
                                     in_dim = self.vit_hidden_size,
                                     out_dim = self.hidden_size,
@@ -186,8 +185,6 @@ class Bagel(PreTrainedModel):
             packed_timesteps: 1-D float tensor, flow timesteps. 0 indicates use clean image.
             mse_loss_indexes: 1-D bool tensor, where to compute mse loss.
         """
-    # ...existing code...
-        # Ensure input tensors are on the model device to avoid cross-device index_select errors
         device = next(self.parameters()).device
         if torch.is_tensor(packed_text_ids) and packed_text_ids.device != device:
             packed_text_ids = packed_text_ids.to(device)
@@ -236,15 +233,12 @@ class Bagel(PreTrainedModel):
 
 
             attention_mask = block_mask
-        else:
-            # ...existing code...
+        else:.
             attention_mask = nested_attention_masks
         if self.config.visual_und:
-            # ...existing code...
             cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
             cu_seqlens = cu_seqlens.to(torch.int32)
             max_seqlen = torch.max(vit_token_seqlens).item()
-            # ...existing code...
             packed_vit_token_embed = self.vit_model(
                 packed_pixel_values=packed_vit_tokens, 
                 packed_flattened_position_ids=packed_vit_position_ids,
@@ -301,7 +295,6 @@ class Bagel(PreTrainedModel):
                 packed_und_token_indexes=packed_und_token_indexes,
                 packed_gen_token_indexes=packed_vae_token_indexes,
             )
-            # ...existing code...
 
         last_hidden_state = self.language_model(
             packed_sequence=packed_sequence,
@@ -310,17 +303,14 @@ class Bagel(PreTrainedModel):
             packed_position_ids=packed_position_ids,
             **extra_inputs,
         )
-    # ...existing code...
 
         mse = None
 
 
-    # ...existing code...
         packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
         target = noise - packed_latent_clean # NOTE: v_t=dx_t/dt=x_1-x_0, pointing from data to noise
         has_mse = packed_timesteps > 0
         mse = (packed_mse_preds - target[has_mse]) ** 2
-    # ...existing code...
         ce = None
         # if ce_loss_indexes is not None:
         #     packed_ce_preds = self.language_model.lm_head(last_hidden_state[ce_loss_indexes])
@@ -488,7 +478,6 @@ class Bagel(PreTrainedModel):
         curr = 0
         device = next(self.parameters()).device
 
-        # Handle existing key-value cache
         curr_kvlen = curr_kvlens
         packed_key_value_indexes.extend(range(curr, curr + curr_kvlens))
         curr += curr_kvlen
@@ -570,90 +559,91 @@ class Bagel(PreTrainedModel):
 
         return generation_input, [newlen], [new_rope_pos]
 
-    @torch.no_grad
-    def forward_cache_update_vit(
-        self,
-        past_key_values: NaiveCache,
-        packed_text_ids: torch.LongTensor,
-        packed_text_indexes: torch.LongTensor,
-        packed_vit_tokens: torch.Tensor,
-        packed_vit_token_indexes: torch.LongTensor,
-        packed_vit_position_ids: torch.LongTensor,
-        vit_token_seqlens: torch.IntTensor,
-        packed_position_ids: torch.LongTensor,
-        packed_seqlens: torch.IntTensor,
-        packed_indexes: torch.LongTensor,
-        packed_key_value_indexes: torch.LongTensor,
-        key_values_lens: torch.IntTensor,
-    ):
-        # Move inputs to model device
-        device = next(self.parameters()).device
-        if torch.is_tensor(packed_text_ids) and packed_text_ids.device != device:
-            packed_text_ids = packed_text_ids.to(device)
-        if torch.is_tensor(packed_text_indexes) and packed_text_indexes.device != device:
-            packed_text_indexes = packed_text_indexes.to(device)
-        if packed_vit_tokens is not None and torch.is_tensor(packed_vit_tokens) and packed_vit_tokens.device != device:
-            packed_vit_tokens = packed_vit_tokens.to(device)
-        if packed_vit_position_ids is not None and torch.is_tensor(packed_vit_position_ids) and packed_vit_position_ids.device != device:
-            packed_vit_position_ids = packed_vit_position_ids.to(device)
-        if packed_vit_token_indexes is not None and torch.is_tensor(packed_vit_token_indexes) and packed_vit_token_indexes.device != device:
-            packed_vit_token_indexes = packed_vit_token_indexes.to(device)
-        if vit_token_seqlens is not None and torch.is_tensor(vit_token_seqlens) and vit_token_seqlens.device != device:
-            vit_token_seqlens = vit_token_seqlens.to(device)
-        if packed_position_ids is not None and torch.is_tensor(packed_position_ids) and packed_position_ids.device != device:
-            packed_position_ids = packed_position_ids.to(device)
-        if packed_seqlens is not None and torch.is_tensor(packed_seqlens) and packed_seqlens.device != device:
-            packed_seqlens = packed_seqlens.to(device)
-        if packed_indexes is not None and torch.is_tensor(packed_indexes) and packed_indexes.device != device:
-            packed_indexes = packed_indexes.to(device)
-        if packed_key_value_indexes is not None and torch.is_tensor(packed_key_value_indexes) and packed_key_value_indexes.device != device:
-            packed_key_value_indexes = packed_key_value_indexes.to(device)
-        if key_values_lens is not None and torch.is_tensor(key_values_lens) and key_values_lens.device != device:
-            key_values_lens = key_values_lens.to(device)
+    # vut cgacge uodate not used
+    # @torch.no_grad
+    # def forward_cache_update_vit(
+    #     self,
+    #     past_key_values: NaiveCache,
+    #     packed_text_ids: torch.LongTensor,
+    #     packed_text_indexes: torch.LongTensor,
+    #     packed_vit_tokens: torch.Tensor,
+    #     packed_vit_token_indexes: torch.LongTensor,
+    #     packed_vit_position_ids: torch.LongTensor,
+    #     vit_token_seqlens: torch.IntTensor,
+    #     packed_position_ids: torch.LongTensor,
+    #     packed_seqlens: torch.IntTensor,
+    #     packed_indexes: torch.LongTensor,
+    #     packed_key_value_indexes: torch.LongTensor,
+    #     key_values_lens: torch.IntTensor,
+    # ):
+    #     # Move inputs to model device
+    #     device = next(self.parameters()).device
+    #     if torch.is_tensor(packed_text_ids) and packed_text_ids.device != device:
+    #         packed_text_ids = packed_text_ids.to(device)
+    #     if torch.is_tensor(packed_text_indexes) and packed_text_indexes.device != device:
+    #         packed_text_indexes = packed_text_indexes.to(device)
+    #     if packed_vit_tokens is not None and torch.is_tensor(packed_vit_tokens) and packed_vit_tokens.device != device:
+    #         packed_vit_tokens = packed_vit_tokens.to(device)
+    #     if packed_vit_position_ids is not None and torch.is_tensor(packed_vit_position_ids) and packed_vit_position_ids.device != device:
+    #         packed_vit_position_ids = packed_vit_position_ids.to(device)
+    #     if packed_vit_token_indexes is not None and torch.is_tensor(packed_vit_token_indexes) and packed_vit_token_indexes.device != device:
+    #         packed_vit_token_indexes = packed_vit_token_indexes.to(device)
+    #     if vit_token_seqlens is not None and torch.is_tensor(vit_token_seqlens) and vit_token_seqlens.device != device:
+    #         vit_token_seqlens = vit_token_seqlens.to(device)
+    #     if packed_position_ids is not None and torch.is_tensor(packed_position_ids) and packed_position_ids.device != device:
+    #         packed_position_ids = packed_position_ids.to(device)
+    #     if packed_seqlens is not None and torch.is_tensor(packed_seqlens) and packed_seqlens.device != device:
+    #         packed_seqlens = packed_seqlens.to(device)
+    #     if packed_indexes is not None and torch.is_tensor(packed_indexes) and packed_indexes.device != device:
+    #         packed_indexes = packed_indexes.to(device)
+    #     if packed_key_value_indexes is not None and torch.is_tensor(packed_key_value_indexes) and packed_key_value_indexes.device != device:
+    #         packed_key_value_indexes = packed_key_value_indexes.to(device)
+    #     if key_values_lens is not None and torch.is_tensor(key_values_lens) and key_values_lens.device != device:
+    #         key_values_lens = key_values_lens.to(device)
 
-        packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
-        packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
-        packed_sequence[packed_text_indexes] = packed_text_embedding
+    #     packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
+    #     packed_sequence = packed_text_embedding.new_zeros((sum(packed_seqlens), self.hidden_size))
+    #     packed_sequence[packed_text_indexes] = packed_text_embedding
 
-        cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
-        cu_seqlens = cu_seqlens.to(torch.int32)
-        max_seqlen = torch.max(vit_token_seqlens).item()
-        if self.use_vilex:
-        # For vilex, we need to get hidden states from all layers
-            packed_vit_token_embed = self.vit_model(
-                packed_pixel_values=packed_vit_tokens, 
-                packed_flattened_position_ids=packed_vit_position_ids,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-                output_hidden_states=True  # This should return all hidden states
-            )
-        # packed_vit_token_embed should now be a tuple of hidden states
-        packed_vit_token_embed = self.connector(0, packed_vit_token_embed) # no tail drop in inference
+    #     cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
+    #     cu_seqlens = cu_seqlens.to(torch.int32)
+    #     max_seqlen = torch.max(vit_token_seqlens).item()
+    #     if self.use_vilex:
+    #     # For vilex, we need to get hidden states from all layers
+    #         packed_vit_token_embed = self.vit_model(
+    #             packed_pixel_values=packed_vit_tokens, 
+    #             packed_flattened_position_ids=packed_vit_position_ids,
+    #             cu_seqlens=cu_seqlens,
+    #             max_seqlen=max_seqlen,
+    #             output_hidden_states=True  # This should return all hidden states
+    #         )
+    #     # packed_vit_token_embed should now be a tuple of hidden states
+    #     packed_vit_token_embed = self.connector(0, packed_vit_token_embed) # no tail drop in inference
 
-        pos_emb = self.vit_pos_embed(packed_vit_position_ids)
-        if packed_vit_token_embed.dtype != packed_sequence.dtype:
-            packed_vit_token_embed = packed_vit_token_embed.to(packed_sequence.dtype)
-        packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
-        print(f"assigning packed vit tokens indexes to {packed_vit_token_indexes} with shape of {packed_vit_token_embed}")
-        extra_inputs = {}
-        if self.use_moe:
-            extra_inputs = {"mode": "und"}
-        print(f"the packed query sequence is {packed_sequence.shape} actually lookjs like {packed_sequence}")
-        output = self.language_model.forward_inference(
-            packed_query_sequence=packed_sequence,
-            query_lens=packed_seqlens,
-            packed_query_position_ids=packed_position_ids,
-            packed_query_indexes=packed_indexes,
-            past_key_values=past_key_values,
-            packed_key_value_indexes=packed_key_value_indexes,
-            key_values_lens=key_values_lens,
-            update_past_key_values=True,
-            is_causal=False,
-            **extra_inputs,
-        )
-        past_key_values = output.past_key_values
+    #     pos_emb = self.vit_pos_embed(packed_vit_position_ids)
+    #     if packed_vit_token_embed.dtype != packed_sequence.dtype:
+    #         packed_vit_token_embed = packed_vit_token_embed.to(packed_sequence.dtype)
+    #     packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
+    #     print(f"assigning packed vit tokens indexes to {packed_vit_token_indexes} with shape of {packed_vit_token_embed}")
+    #     extra_inputs = {}
+    #     if self.use_moe:
+    #         extra_inputs = {"mode": "und"}
+    #     print(f"the packed query sequence is {packed_sequence.shape} actually lookjs like {packed_sequence}")
+    #     output = self.language_model.forward_inference(
+    #         packed_query_sequence=packed_sequence,
+    #         query_lens=packed_seqlens,
+    #         packed_query_position_ids=packed_position_ids,
+    #         packed_query_indexes=packed_indexes,
+    #         past_key_values=past_key_values,
+    #         packed_key_value_indexes=packed_key_value_indexes,
+    #         key_values_lens=key_values_lens,
+    #         update_past_key_values=True,
+    #         is_causal=False,
+    #         **extra_inputs,
+    #     )
+    #     past_key_values = output.past_key_values
 
-        return past_key_values
+    #     return past_key_values
 
     @torch.no_grad
     def forward_cache_update_vilex(
