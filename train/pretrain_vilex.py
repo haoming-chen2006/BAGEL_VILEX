@@ -393,6 +393,9 @@ class TrainingArguments:
     )
 
 
+
+# visual und and visual gen is default to always turn on
+
 def main():
     assert torch.cuda.is_available()
     
