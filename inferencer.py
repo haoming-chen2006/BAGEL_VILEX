@@ -120,8 +120,8 @@ class InterleaveInferencer:
         
         print("calling model to prepare VILEX from image")
         generation_input, kv_lens, ropes = self.model.prepare_vilex_from_image(
-            curr_kvlens=kv_lens[0],
-            curr_position_id=ropes[0], 
+            curr_kvlens=kv_lens,
+            curr_rope=ropes,
             image=image,
             transforms=self.vit_transform,  # Use VIT transform for image processing
             new_token_ids=self.new_token_ids,
