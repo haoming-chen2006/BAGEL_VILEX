@@ -463,95 +463,126 @@ class Bagel(PreTrainedModel):
 
         return generation_input, newlens, new_rope
 
-    def prepare_vilex_from_image(self, curr_kvlens, curr_position_id, image, transforms, new_token_ids, text_ids=None, tokenizer=None):
-        """Process single image to get VILEX tokens following dataloader sequence rules"""
-        packed_text_ids = list()
-        packed_text_position_ids = list()
-        text_token_lens = list()
-        packed_text_indexes = list()
-        packed_key_value_indexes = list()
+    def prepare_vilex_from_image(self, curr_kvlens, curr_rope, image, transforms, new_token_ids, text_ids=None, tokenizer=None):
+        """Prepare a single VILEX sample so the token order matches training."""
 
-        curr = 0
+        # Normalize inputs to single-element lists to simplify downstream logic
+        if isinstance(curr_kvlens, (list, tuple)):
+            if len(curr_kvlens) != 1:
+                raise ValueError("prepare_vilex_from_image only supports batch size 1 during inference.")
+            curr_kvlen = curr_kvlens[0]
+        else:
+            curr_kvlen = curr_kvlens
+            curr_kvlens = [curr_kvlen]
+
+        if isinstance(curr_rope, (list, tuple)):
+            if len(curr_rope) != 1:
+                raise ValueError("prepare_vilex_from_image only supports batch size 1 during inference.")
+            curr_position_id = curr_rope[0]
+        else:
+            curr_position_id = curr_rope
+            curr_rope = [curr_position_id]
+
         device = next(self.parameters()).device
 
-        curr_kvlen = curr_kvlens
-        packed_key_value_indexes.extend(range(curr, curr + curr_kvlens))
-        curr += curr_kvlen
-
-        # Process text part - create BOS + text (no EOS yet, matches training)
-        if text_ids is not None:
-            # text_ids is already encoded token list
-            text_tokens = [new_token_ids['bos_token_id']] + text_ids
-        else:
-            # Default text for image-only inference
+        # Encode guidance text exactly once, mirroring dataset packing (BOS + text, EOS added later)
+        if text_ids is None:
             if tokenizer is not None:
-                default_text_ids = tokenizer.encode("generate an image of")
+                text_ids = tokenizer.encode("generate an image of")
             else:
-                default_text_ids = [1147, 459, 1726, 315]  # fallback token ids for "generate an image of"
-            text_tokens = [new_token_ids['bos_token_id']] + default_text_ids
+                text_ids = [1147, 459, 1726, 315]
+        text_tokens = [new_token_ids['bos_token_id']] + text_ids
 
-        # Process image to get VILEX tokens
-        # Get model dtype from VIT model parameters
+        # Vision processing uses the same dtype/device choices as training
         model_dtype = next(self.vit_model.parameters()).dtype
-        
         image_tensor = transforms(image).to(device=device, dtype=model_dtype)
         vit_position_ids = self.get_flattened_position_ids(
-            image_tensor.size(1), image_tensor.size(2), 
-            self.vit_patch_size, 
-            max_num_patches_per_side=self.vit_max_num_patch_per_side
+            image_tensor.size(1), image_tensor.size(2),
+            self.vit_patch_size,
+            max_num_patches_per_side=self.vit_max_num_patch_per_side,
         ).to(device)
         vit_tokens = patchify(image_tensor, self.vit_patch_size).to(device=device, dtype=model_dtype)
-        
-        # Get VILEX embeddings from the vision model
-        vit_token_seqlens = torch.tensor([len(vit_position_ids)], dtype=torch.int32, device=device)
+
+        vit_token_seqlens = torch.tensor([vit_tokens.shape[0]], dtype=torch.int32, device=device)
         cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0)).to(torch.int32)
         max_seqlen = torch.max(vit_token_seqlens).item()
-        
+
+        # Convert vision tokens into the compact VILEX representation
         packed_vit_token_embed = self.vit_model(
-            packed_pixel_values=vit_tokens, 
+            packed_pixel_values=vit_tokens,
             packed_flattened_position_ids=vit_position_ids,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
         )
-        
-        # Convert VIT embeddings to VILEX tokens through connector (disable taildrop for inference)
         packed_vilex_tokens = self.connector(0, packed_vit_token_embed)
         num_vilex_tokens = packed_vilex_tokens.shape[0]
 
-        # Create embeddings for complete sequence: BOS + text + VILEX + EOS + VIS_START (matches training)
-        text_embeddings = self.language_model.model.embed_tokens(torch.tensor(text_tokens, dtype=torch.long, device=device))
-        eos_embedding = self.language_model.model.embed_tokens(torch.tensor([new_token_ids['eos_token_id']], dtype=torch.long, device=device))
-        vis_start_embedding = self.language_model.model.embed_tokens(torch.tensor([new_token_ids['start_of_image']], dtype=torch.long, device=device))
-        
-        # Ensure all embeddings have the same dtype
-        if packed_vilex_tokens.dtype != text_embeddings.dtype:
-            packed_vilex_tokens = packed_vilex_tokens.to(text_embeddings.dtype)
-        if eos_embedding.dtype != text_embeddings.dtype:
-            eos_embedding = eos_embedding.to(text_embeddings.dtype)
-        if vis_start_embedding.dtype != text_embeddings.dtype:
-            vis_start_embedding = vis_start_embedding.to(text_embeddings.dtype)
-            
-        # Combine all embeddings: BOS + text + VILEX + EOS + VIS_START (matches training sequence)
-        combined_embeddings = torch.cat([text_embeddings, packed_vilex_tokens, eos_embedding, vis_start_embedding], dim=0)
-        
-        # Set up the sequence structure
-        total_tokens = combined_embeddings.shape[0]
-        text_token_lens.append(total_tokens)
-        packed_text_position_ids.extend(range(curr_position_id, curr_position_id + total_tokens))
-        packed_text_indexes.extend(range(curr, curr + total_tokens))
-        
-        newlen = curr_kvlen + total_tokens
-        new_rope_pos = curr_position_id + total_tokens
+        # Track sequence assembly to mirror the dataset order exactly
+        packed_text_ids = []
+        packed_text_indexes = []
+        packed_position_ids = []
+        packed_indexes = []
+        packed_vilex_token_indexes = []
+
+        kv_cursor = curr_kvlen
+        query_cursor = 0
+        rope_cursor = curr_position_id
+
+        # 1) BOS + text tokens
+        for token in text_tokens:
+            packed_text_ids.append(token)
+            packed_text_indexes.append(query_cursor)
+            packed_position_ids.append(rope_cursor)
+            packed_indexes.append(kv_cursor)
+            query_cursor += 1
+            kv_cursor += 1
+            rope_cursor += 1
+
+        # 2) VILEX tokens (connector outputs)
+        for _ in range(num_vilex_tokens):
+            packed_vilex_token_indexes.append(query_cursor)
+            packed_position_ids.append(rope_cursor)
+            packed_indexes.append(kv_cursor)
+            query_cursor += 1
+            kv_cursor += 1
+            rope_cursor += 1
+
+        # 3) EOS token inserted after VILEX block (matching training packer)
+        eos_id = new_token_ids['eos_token_id']
+        packed_text_ids.append(eos_id)
+        packed_text_indexes.append(query_cursor)
+        packed_position_ids.append(rope_cursor)
+        packed_indexes.append(kv_cursor)
+        query_cursor += 1
+        kv_cursor += 1
+        rope_cursor += 1
+
+        # 4) <|vision_start|> marks the upcoming latent block
+        start_image_id = new_token_ids['start_of_image']
+        packed_text_ids.append(start_image_id)
+        packed_text_indexes.append(query_cursor)
+        packed_position_ids.append(rope_cursor)
+        packed_indexes.append(kv_cursor)
+        query_cursor += 1
+        kv_cursor += 1
+        rope_cursor += 1
+
+        total_tokens = query_cursor
 
         generation_input = {
-            "text_token_lens": torch.tensor(text_token_lens, dtype=torch.int, device=device),
-            "packed_text_embeddings": combined_embeddings,  # Direct embeddings, not token IDs
-            "packed_text_position_ids": torch.tensor(packed_text_position_ids, dtype=torch.long, device=device),
+            "packed_text_ids": torch.tensor(packed_text_ids, dtype=torch.long, device=device),
             "packed_text_indexes": torch.tensor(packed_text_indexes, dtype=torch.long, device=device),
-            "packed_key_value_indexes": torch.tensor(packed_key_value_indexes, dtype=torch.long, device=device),
+            "packed_position_ids": torch.tensor(packed_position_ids, dtype=torch.long, device=device),
+            "packed_seqlens": torch.tensor([total_tokens], dtype=torch.int, device=device),
+            "packed_indexes": torch.tensor(packed_indexes, dtype=torch.long, device=device),
+            "packed_vilex_embeddings": packed_vilex_tokens.to(device=device, dtype=self.language_model.model.embed_tokens.weight.dtype),
+            "packed_vilex_indexes": torch.tensor(packed_vilex_token_indexes, dtype=torch.long, device=device),
+            "packed_key_value_indexes": torch.tensor(range(curr_kvlen), dtype=torch.long, device=device),
             "key_values_lens": torch.tensor([curr_kvlen], dtype=torch.int, device=device),
         }
-        print(generation_input)
+
+        newlen = curr_kvlen + total_tokens
+        new_rope_pos = rope_cursor
 
         return generation_input, [newlen], [new_rope_pos]
 
@@ -645,36 +676,54 @@ class Bagel(PreTrainedModel):
     def forward_cache_update_vilex(
         self,
         past_key_values: NaiveCache,
-        packed_text_embeddings: torch.Tensor,
-        packed_text_position_ids: torch.LongTensor,
-        text_token_lens: torch.LongTensor,
+        packed_text_ids: torch.LongTensor,
         packed_text_indexes: torch.LongTensor,
+        packed_position_ids: torch.LongTensor,
+        packed_seqlens: torch.IntTensor,
+        packed_indexes: torch.LongTensor,
+        packed_vilex_embeddings: torch.Tensor,
+        packed_vilex_indexes: torch.LongTensor,
         packed_key_value_indexes: torch.LongTensor,
         key_values_lens: torch.IntTensor,
     ):
-        """Process VILEX tokens and update cache (treat as text-like tokens)"""
+        """Update KV cache with text + VILEX tokens following training order."""
         device = next(self.parameters()).device
-        
-        # Move inputs to model device
-        if torch.is_tensor(packed_text_embeddings) and packed_text_embeddings.device != device:
-            packed_text_embeddings = packed_text_embeddings.to(device)
-        if torch.is_tensor(packed_text_position_ids) and packed_text_position_ids.device != device:
-            packed_text_position_ids = packed_text_position_ids.to(device)
+
+        # Move tensors to the working device
+        if torch.is_tensor(packed_text_ids) and packed_text_ids.device != device:
+            packed_text_ids = packed_text_ids.to(device)
         if torch.is_tensor(packed_text_indexes) and packed_text_indexes.device != device:
             packed_text_indexes = packed_text_indexes.to(device)
+        if torch.is_tensor(packed_position_ids) and packed_position_ids.device != device:
+            packed_position_ids = packed_position_ids.to(device)
+        if torch.is_tensor(packed_seqlens) and packed_seqlens.device != device:
+            packed_seqlens = packed_seqlens.to(device)
+        if torch.is_tensor(packed_indexes) and packed_indexes.device != device:
+            packed_indexes = packed_indexes.to(device)
+        if torch.is_tensor(packed_vilex_embeddings) and packed_vilex_embeddings.device != device:
+            packed_vilex_embeddings = packed_vilex_embeddings.to(device)
+        if torch.is_tensor(packed_vilex_indexes) and packed_vilex_indexes.device != device:
+            packed_vilex_indexes = packed_vilex_indexes.to(device)
         if torch.is_tensor(packed_key_value_indexes) and packed_key_value_indexes.device != device:
             packed_key_value_indexes = packed_key_value_indexes.to(device)
-        if torch.is_tensor(text_token_lens) and text_token_lens.device != device:
-            text_token_lens = text_token_lens.to(device)
         if torch.is_tensor(key_values_lens) and key_values_lens.device != device:
             key_values_lens = key_values_lens.to(device)
 
-        # Ensure cache is on correct device
+        # Build the packed sequence exactly as training forward pass does
+        text_embeddings = self.language_model.model.embed_tokens(packed_text_ids)
+        sequence_length = packed_position_ids.shape[0]
+        packed_sequence = text_embeddings.new_zeros((sequence_length, self.hidden_size))
+        packed_sequence[packed_text_indexes] = text_embeddings
+
+        if packed_vilex_embeddings.dtype != packed_sequence.dtype:
+            packed_vilex_embeddings = packed_vilex_embeddings.to(packed_sequence.dtype)
+        packed_sequence[packed_vilex_indexes] = packed_vilex_embeddings
+
+        # Ensure cache is located on the proper device
         if past_key_values is not None:
             try:
                 past_key_values = past_key_values.to(device)
             except Exception:
-                # Fallback: manually move cache tensors
                 if hasattr(past_key_values, 'cache') and isinstance(past_key_values.cache, list):
                     for i, layer_cache in enumerate(past_key_values.cache):
                         if layer_cache is not None and hasattr(layer_cache, 'to'):
@@ -683,23 +732,20 @@ class Bagel(PreTrainedModel):
                             except Exception:
                                 pass
 
-        extra_inputs = {}
-        if self.use_moe:
-            extra_inputs = {"mode": "und"}
-        
+        extra_inputs = {"mode": "und"} if self.use_moe else {}
+
         output = self.language_model.forward_inference(
-            packed_query_sequence=packed_text_embeddings,
-            query_lens=text_token_lens,
-            packed_query_position_ids=packed_text_position_ids,
-            packed_query_indexes=packed_text_indexes,
+            packed_query_sequence=packed_sequence,
+            query_lens=packed_seqlens,
+            packed_query_position_ids=packed_position_ids,
+            packed_query_indexes=packed_indexes,
             past_key_values=past_key_values,
             packed_key_value_indexes=packed_key_value_indexes,
             key_values_lens=key_values_lens,
             update_past_key_values=True,
-            is_causal=True,
+            is_causal=False,
             **extra_inputs,
         )
-        print("finished preparing past key values")
         return output.past_key_values
 
     def prepare_vae_images(self, curr_kvlens, curr_rope, images, transforms, new_token_ids, timestep=0):
