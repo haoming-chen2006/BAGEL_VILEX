@@ -677,17 +677,17 @@ if __name__ == "__main__":
         return image
 
     # 1) Text-to-image example (saved)
-    try:
-        print("text to image start!")
-        img, thinking = text_to_image("two cute lammas with sunglasses and a large hat on the beach", seed=42)
-        img_pil = ensure_pil(img)
-        img_path = os.path.join(out_dir, "text_to_image2.png")
-        img_pil.save(img_path)
-        with open(os.path.join(out_dir, "text_to_image_thinking.txt"), "w") as fh:
-            fh.write(thinking or "")
-        print("Saved text-to-image ->", img_path)
-    except Exception as e:
-        print("Text-to-image failed:", e)
+    # try:
+    #     print("text to image start!")
+    #     img, thinking = text_to_image("two cute lammas with sunglasses and a large hat on the beach", seed=42)
+    #     img_pil = ensure_pil(img)
+    #     img_path = os.path.join(out_dir, "text_to_image2.png")
+    #     img_pil.save(img_path)
+    #     with open(os.path.join(out_dir, "text_to_image_thinking.txt"), "w") as fh:
+    #         fh.write(thinking or "")
+    #     print("Saved text-to-image ->", img_path)
+    # except Exception as e:
+    #     print("Text-to-image failed:", e)
 
     # 2) Image edit: use /home/haoming/Bagel/puppy.jpg with prompt "in a park"
     puppy_path = "/home/haoming/Bagel/puppy.jpg"

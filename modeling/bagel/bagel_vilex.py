@@ -233,59 +233,55 @@ class Bagel(PreTrainedModel):
 
 
             attention_mask = block_mask
-        else:.
+        else:
             attention_mask = nested_attention_masks
-        if self.config.visual_und:
-            cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
-            cu_seqlens = cu_seqlens.to(torch.int32)
-            max_seqlen = torch.max(vit_token_seqlens).item()
-            packed_vit_token_embed = self.vit_model(
-                packed_pixel_values=packed_vit_tokens, 
-                packed_flattened_position_ids=packed_vit_position_ids,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-            )
-            
+        cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
+        cu_seqlens = cu_seqlens.to(torch.int32)
+        max_seqlen = torch.max(vit_token_seqlens).item()
+        packed_vit_token_embed = self.vit_model(
+            packed_pixel_values=packed_vit_tokens, 
+            packed_flattened_position_ids=packed_vit_position_ids,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
+        
+        # packed_vit_token_embed = packed_vit_token_embed + vit_token_pos_emb -- temporarily disabled here, muiltiple hidden layers
+        packed_vit_token_embed = self.connector(k,packed_vit_token_embed)
 
+        # Debug: Check bounds for packed_vit_token_indexes
+        if packed_vit_token_indexes.max() >= sequence_length:
+            print(f"ERROR: packed_vit_token_indexes max ({packed_vit_token_indexes.max()}) >= sequence_length ({sequence_length})")
+            print(f"packed_vit_token_indexes shape: {packed_vit_token_indexes.shape}, values: {packed_vit_token_indexes}")
+            print(f"packed_vit_token_embed shape: {packed_vit_token_embed.shape}")
+            print(f"k (taildrop): {k}")
+            raise ValueError("Index out of bounds in packed_vit_token_indexes")
+        
+        packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
 
-            # packed_vit_token_embed = packed_vit_token_embed + vit_token_pos_emb -- temporarily disabled here, muiltiple hidden layers
-            packed_vit_token_embed = self.connector(k,packed_vit_token_embed)
-
-            # Debug: Check bounds for packed_vit_token_indexes
-            if packed_vit_token_indexes.max() >= sequence_length:
-                print(f"ERROR: packed_vit_token_indexes max ({packed_vit_token_indexes.max()}) >= sequence_length ({sequence_length})")
-                print(f"packed_vit_token_indexes shape: {packed_vit_token_indexes.shape}, values: {packed_vit_token_indexes}")
-                print(f"packed_vit_token_embed shape: {packed_vit_token_embed.shape}")
-                print(f"k (taildrop): {k}")
-                raise ValueError("Index out of bounds in packed_vit_token_indexes")
+        p = self.latent_patch_size
+        packed_latent = []
+        for latent, (h, w) in zip(padded_latent, patchified_vae_latent_shapes):
+            latent = latent[:, :h * p, :w * p].reshape(self.latent_channel, h, p, w, p)
+            latent = torch.einsum("chpwq->hwpqc", latent).reshape(-1, p * p * self.latent_channel)
+            packed_latent.append(latent)
+        packed_latent_clean = torch.cat(packed_latent, dim=0)
+        noise = torch.randn_like(packed_latent_clean)
+        packed_timesteps = torch.sigmoid(packed_timesteps)
+        packed_timesteps = self.timestep_shift * packed_timesteps / (1 + (self.timestep_shift - 1) * packed_timesteps)
+        packed_latent = (1 - packed_timesteps[:, None]) * packed_latent_clean + packed_timesteps[:, None] * noise
+        packed_timestep_embeds = self.time_embedder(packed_timesteps)
+        latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
+        
+        packed_latent = self.vae2llm(packed_latent) + packed_timestep_embeds + latent_token_pos_emb
             
-            packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
-
-        if self.config.visual_gen:
-            p = self.latent_patch_size
-            packed_latent = []
-            for latent, (h, w) in zip(padded_latent, patchified_vae_latent_shapes):
-                latent = latent[:, :h * p, :w * p].reshape(self.latent_channel, h, p, w, p)
-                latent = torch.einsum("chpwq->hwpqc", latent).reshape(-1, p * p * self.latent_channel)
-                packed_latent.append(latent)
-            packed_latent_clean = torch.cat(packed_latent, dim=0)
-            noise = torch.randn_like(packed_latent_clean)
-            packed_timesteps = torch.sigmoid(packed_timesteps)
-            packed_timesteps = self.timestep_shift * packed_timesteps / (1 + (self.timestep_shift - 1) * packed_timesteps)
-            packed_latent = (1 - packed_timesteps[:, None]) * packed_latent_clean + packed_timesteps[:, None] * noise
-            packed_timestep_embeds = self.time_embedder(packed_timesteps)
-            latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
-            
-            packed_latent = self.vae2llm(packed_latent) + packed_timestep_embeds + latent_token_pos_emb
-            
-            # Debug: Check bounds for packed_vae_token_indexes
-            if packed_vae_token_indexes.max() >= sequence_length:
-                print(f"ERROR: packed_vae_token_indexes max ({packed_vae_token_indexes.max()}) >= sequence_length ({sequence_length})")
-                print(f"packed_vae_token_indexes shape: {packed_vae_token_indexes.shape}, values: {packed_vae_token_indexes}")
-                print(f"packed_latent shape: {packed_latent.shape}")
-                raise ValueError("Index out of bounds in packed_vae_token_indexes")
-            
-            packed_sequence[packed_vae_token_indexes] = packed_latent
+        # Debug: Check bounds for packed_vae_token_indexes
+        if packed_vae_token_indexes.max() >= sequence_length:
+            print(f"ERROR: packed_vae_token_indexes max ({packed_vae_token_indexes.max()}) >= sequence_length ({sequence_length})")
+            print(f"packed_vae_token_indexes shape: {packed_vae_token_indexes.shape}, values: {packed_vae_token_indexes}")
+            print(f"packed_latent shape: {packed_latent.shape}")
+            raise ValueError("Index out of bounds in packed_vae_token_indexes")
+        
+        packed_sequence[packed_vae_token_indexes] = packed_latent
         extra_inputs = {}
         if self.use_moe:
             packed_und_token_indexes = packed_text_indexes
