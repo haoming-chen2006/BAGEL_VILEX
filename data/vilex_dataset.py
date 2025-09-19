@@ -196,12 +196,7 @@ class VilexDataset(torch.utils.data.IterableDataset):
         # Text loss
         ce_loss_indexes.extend(range(curr, curr + len(shifted_text)))
         weight_value = len2weight(len(shifted_text))
-        if padding and text_cut > 0:
-            # Only apply zero weights for padding tokens when padding is enabled
-            ce_loss_weights.extend([weight_value] * (len(shifted_text) - text_cut) + [0.0] * text_cut)
-        else:
-            # No padding or padding disabled - all tokens get weight
-            ce_loss_weights.extend([weight_value] * len(shifted_text))
+        ce_loss_weights.extend([weight_value] * len(shifted_text))
         
         curr += len(shifted_text)
         text_split_len += len(shifted_text)
@@ -234,22 +229,22 @@ class VilexDataset(torch.utils.data.IterableDataset):
         packed_vit_tokens.append(vit_patches)
         curr += num_queries
         vit_split_len += num_queries
-
-        packed_text_ids.extend([self.eos_token_id])
-        packed_text_indexes.append(curr)
-
-        curr += 1
-        packed_position_ids.extend([rope_id])
-        rope_id += 1
-        text_split_len +=1
-        
-
-        # ViT position IDs (2D flattened)
+        packed_position_ids.extend(range(rope_id, rope_id + vit_split_len))
+        rope_id += vit_split_len
         h, w = image_tensor.shape[1:]
         vit_pos_ids = get_flattened_position_ids_extrapolate(
             h, w, self.vit_patch_size, max_num_patches_per_side = 70
         )
         packed_vit_position_ids.extend([vit_pos_ids])
+
+        packed_text_ids.extend([self.eos_token_id])
+        packed_text_indexes.append(curr)
+        curr += 1
+        packed_position_ids.extend([rope_id])
+        rope_id += 1
+        text_split_len +=1
+
+
 
         packed_text_ids.append(self.start_of_image)
         packed_text_indexes.append(curr)
@@ -257,6 +252,14 @@ class VilexDataset(torch.utils.data.IterableDataset):
         packed_position_ids.extend([rope_id])
         rope_id += 1
         text_split_len +=1
+
+
+        split_lens.append(text_split_len)
+        split_lens.append(vit_split_len)
+        attn_modes.append("causal")
+        
+        # 3. VAE BLOCK
+        
         
         # End of image -- currently not applied
         # packed_text_ids.append(self.end_of_image)
@@ -268,37 +271,17 @@ class VilexDataset(torch.utils.data.IterableDataset):
         # All ViT tokens get same RoPE position as text
 
         
-        packed_position_ids.extend(range(rope_id, rope_id + vit_split_len))
-        rope_id += vit_split_len
-        split_lens.append(text_split_len)
-        split_lens.append(vit_split_len)
-        attn_modes.append("causal")
-        
-        # 3. VAE BLOCK
+
         vae_split_len = 0
-        
-        # Start of image
-        
-        # vae_split_len += 1 -- instead append a small split lens of size 2
-        
-        # VAE tokens
         packed_vae_token_indexes.extend(range(curr, curr + num_vae_tokens))
         mse_loss_indexes.extend(range(curr, curr + num_vae_tokens))
         
         # Random timestep for diffusion
-        timestep = np.random.randint(0, 1000) # no bound?
+        timestep = np.random.randn() # no bound?
         packed_timesteps.extend([timestep] * num_vae_tokens)
         
         curr += num_vae_tokens
         vae_split_len += num_vae_tokens
-        
-        # End of image
-        packed_text_ids.append(self.end_of_image)
-        packed_text_indexes.append(curr)
-        curr += 1
-        vae_split_len += 1 
-        packed_position_ids.extend([rope_id])
-        rope_id += 1
 
         
         # All VAE tokens get same RoPE position
@@ -312,8 +295,18 @@ class VilexDataset(torch.utils.data.IterableDataset):
                     )
                 )
         rope_id += 1
-        split_lens.append(vae_split_len)
+
+
+        packed_text_ids.append(self.end_of_image)
+        packed_text_indexes.append(curr)
+        curr += 1
+        vae_split_len += 1 # for simplicity here -- becaus last token doesnt matter casual or full
+        packed_position_ids.extend([rope_id])
+        rope_id += 1        
+        
+        split_lens.append(vae_split_len) 
         attn_modes.append("noise")  # For diffusion training
+
 
         nested_attention_masks = [self._prepare_attention_mask(split_lens, attn_modes)]
         
